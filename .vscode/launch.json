@@ -10,8 +10,8 @@
 			"request": "launch",
 			"program": "${fileDirname}\\${fileBasenameNoExtension}.exe",
 			"args": [
-				"res.hcode",
-				"16"
+				"src.txt",
+				"12"
 			],
 			"stopAtEntry": false,
 			"cwd": "${workspaceFolder}",

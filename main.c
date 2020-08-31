@@ -49,6 +49,10 @@ unsigned char ChangeExtension( char **fname );
 // $ Return 0 if not
 extern inline int isPowOf2( int value );
 
+// Write global buffer to file
+// $ dest - destination file
+void Write( FILE *dest );
+
 // Pushes hamming code to file [dest]
 // $ dest - output stream
 // $ bit - bit to push to output file
@@ -174,8 +178,7 @@ unsigned char ChangeExtension( char **fname ){
 				free( *fname );
 				*fname = temp_fname;
 				return 1;
-			}
-			else {
+			} else {
 				// Convert any extension to EXTENSION_NAME
 				(*fname)[i] = 0;
 				temp_fname = ( char * ) calloc ( strlen( *fname ) + strlen( EXTENSION_NAME ) + 1, sizeof( char ) );
@@ -200,6 +203,22 @@ inline int isPowOf2( int value ){
 	return ( value > 0 && ( value & (value - 1) ) == 0 );
 }
 
+// Write global buffer to file
+// $ dest - destination file
+void Write( FILE *dest ){
+	if( dest == NULL ){
+		printerr( "[ Write ] unexpected null pointer\n" );
+		return;
+	}
+	register char i;
+	// Writing
+	for( i = 0; i < push_pos / CHAR_BIT; i++ ){
+		fputc( push_buffer[ i ], dest );
+	}
+	memset( push_buffer, 0, BUFFER_SIZE );
+	push_pos = 0;
+}
+
 // Pushes hamming code to file [dest]
 // $ [dest] - output stream
 // $ [bit] - bit to push to output file
@@ -210,21 +229,15 @@ void Push( FILE *dest, unsigned char bit, char write ){
 		return;
 	}
 
-	register char i;
-	
 	// Adding new bit to push buffer
 	// $ Bits writes from right to left
 	// $ Bytes writes from left to right
 	push_pos += 1;
-	push_buffer[ (push_pos - 1) / CHAR_BIT ] ^= ( bit << ( (CHAR_BIT - 1) - (push_pos - 1) % CHAR_BIT ) );
+	push_buffer[ (push_pos - 1) / CHAR_BIT ] ^= bit << ( (CHAR_BIT - 1) - (push_pos - 1) % CHAR_BIT );
 	
 	// Writing
 	if( write ){
-		for( i = 0; i < push_pos / CHAR_BIT; i++ ){
-			fputc( push_buffer[ i ], dest );
-		}
-		memset( push_buffer, 0, BUFFER_SIZE );
-		push_pos = 0;
+		Write( dest );
 	}
 }
 
@@ -275,6 +288,24 @@ void Encode( FILE *fin, FILE *fout, short block ){
 				// End of the file or error
 				if( feof( fin ) || bit_buf == -1 || bit_buf == -2 ){
 					if( ib == 3 ){
+						// Write remain of the buffer
+						if( push_pos != 0 ){
+							for( i = 1; i < block; i++ ){
+								if( push_pos == 7 ){
+									Push(
+										fout, // $ [push_pos / CHAR_BIT + (push_pos % CHAR_BIT != 0)] - the last writed buffer's item
+										( buffer[ (i - 1) / CHAR_BIT ] & ( 1 << ( (CHAR_BIT - 1) - ((i - 1) % CHAR_BIT) ) ) ) && 1,
+										1 // Write a byte
+									);
+								} else {
+									Push(
+										fout, // $ [push_pos / CHAR_BIT + (push_pos % CHAR_BIT != 0)] - the last writed buffer's item
+										( buffer[ (i - 1) / CHAR_BIT ] & ( 1 << ( (CHAR_BIT - 1) - ((i - 1) % CHAR_BIT) ) ) ) && 1,
+										0 // Don't write a byte
+									);
+								}
+							}
+						}
 						return;
 					}
 					break;
@@ -299,7 +330,7 @@ void Encode( FILE *fin, FILE *fout, short block ){
 
 		// Writing
 		for( i = 1; i <= block; i++ ){
-			if( push_pos == ( block % CHAR_BIT == 0 ? block - 1: ( block / CHAR_BIT + 1 ) * CHAR_BIT - 1 ) ){
+			if( push_pos == 7 ){
 				Push(
 					fout, // $ [push_pos / CHAR_BIT + (push_pos % CHAR_BIT != 0)] - the last writed buffer's item
 					( buffer[ (i - 1) / CHAR_BIT ] & ( 1 << ( (CHAR_BIT - 1) - ((i - 1) % CHAR_BIT) ) ) ) && 1,
@@ -351,7 +382,18 @@ void Decode( FILE *fin, FILE *fout, short block ){
 
 			// End of the file or error
 			if( feof( fin ) || bit_buf == -1 || bit_buf == -2 ){
-				i = 0;
+				// Writing remain of the buffer
+				for( i = 3; buffer[ (i - 1) / CHAR_BIT ]; i++ ){
+					if( !isPowOf2( i ) ){
+						push_pos -= 1;
+						push_byte ^= ( ( buffer[ (i - 1) / CHAR_BIT ] & ( 1 << ( (CHAR_BIT - 1) - (( i - 1 ) % ( CHAR_BIT )) ) ) ) && 1 ) << push_pos;
+						if( push_pos == 0 ){
+							fputc( push_byte, fout );
+							push_pos = CHAR_BIT;
+							push_byte = 0;
+						}
+					}
+				}
 				return;
 			}
 
